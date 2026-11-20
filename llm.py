@@ -12,4 +12,4 @@ def chat_llm(messages,system_message = "you are a helpfull Assistent"):
     all_messages = [system_message,HumanMessage(content=messages)]
     response = llm.invoke(all_messages)
 
-    return print(response.content)
+    return response.content
