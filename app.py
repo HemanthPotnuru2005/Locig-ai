@@ -1,73 +1,105 @@
-# Import Streamlit library for the web UI
 import streamlit as st
-from rag import retrieve, final_prompt
-from llm import chat_llm
+from llm import chatbot, retrieve_all_threads
+from langchain_core.messages import HumanMessage
+import uuid
 
-# Configure browser page title and icon
-st.set_page_config(page_title="RAG & LLM Chatbot", page_icon="🤖")
 
-# Display main app title
-st.title("🤖 AI Chatbot")
+# **************************************** utility functions *************************
 
-# Display a subtitle description
-st.caption("Streamlit interface connected with rag.py and llm.py")
+def generate_thread_id():
+    thread_id = uuid.uuid4()
+    return thread_id
 
-# Add a sidebar title for controls
-st.sidebar.title("⚙️ Options")
+def reset_chat():
+    thread_id = generate_thread_id()
+    st.session_state['thread_id'] = thread_id
+    add_thread(st.session_state['thread_id'])
+    st.session_state['message_history'] = []
 
-# Radio button to select between RAG mode and Normal Chat mode
-mode = st.sidebar.radio("Choose Mode:", ["RAG Mode", "Normal Chat Mode"])
+def add_thread(thread_id):
+    if thread_id not in st.session_state['chat_threads']:
+        st.session_state['chat_threads'].append(thread_id)
 
-# Button to clear conversation history
-if st.sidebar.button("Clear Chat"):
-    # Reset message list in session state
-    st.session_state["messages"] = []
-    # Rerun the app to refresh display
-    st.rerun()
+def load_conversation(thread_id):
+    state = chatbot.get_state(config={'configurable': {'thread_id': thread_id}})
+    # Check if messages key exists in state values, return empty list if not
+    return state.values.get('messages', [])
 
-# Check if message history exists in session state
-if "messages" not in st.session_state:
-    # Initialize empty message list
-    st.session_state["messages"] = []
 
-# Loop through past messages
-for msg in st.session_state["messages"]:
-    # Render chat bubble for sender role
-    with st.chat_message(msg["role"]):
-        # Display message text
-        st.write(msg["content"])
+# **************************************** Session Setup ******************************
+if 'message_history' not in st.session_state:
+    st.session_state['message_history'] = []
 
-# Chat input box at the bottom of page
-user_input = st.chat_input("Type your message here...")
+if 'thread_id' not in st.session_state:
+    st.session_state['thread_id'] = generate_thread_id()
 
-# Process user question when submitted
-if user_input:
-    # Add user message to history
-    st.session_state["messages"].append({"role": "user", "content": user_input})
+if 'chat_threads' not in st.session_state:
+    st.session_state['chat_threads'] = retrieve_all_threads() or []
 
-    # Display user chat bubble
-    with st.chat_message("user"):
-        # Print user message text
-        st.write(user_input)
+add_thread(st.session_state['thread_id'])
 
-    # Display assistant chat bubble
-    with st.chat_message("assistant"):
-        # Show spinner while generating response
-        with st.spinner("Thinking..."):
-            # Check if RAG Mode is selected
-            if mode == "RAG Mode":
-                # Retrieve relevant document chunks from rag.py
-                retrieved_docs = retrieve(user_input)
-                # Combine chunks into one context string
-                context = " ".join([doc.page_content for doc in retrieved_docs])
-                # Generate response using final_prompt from rag.py
-                response = final_prompt(context, user_input)
-            # If Normal Chat Mode is selected
+
+# **************************************** Sidebar UI *********************************
+
+st.sidebar.title('LangGraph Chatbot')
+
+if st.sidebar.button('New Chat'):
+    reset_chat()
+
+st.sidebar.header('My Conversations')
+
+for thread_id in st.session_state['chat_threads'][::-1]:
+    if st.sidebar.button(str(thread_id)):
+        st.session_state['thread_id'] = thread_id
+        messages = load_conversation(thread_id)
+
+        temp_messages = []
+
+        for msg in messages:
+            if isinstance(msg, HumanMessage):
+                role='user'
             else:
-                # Generate response using chat_llm from llm.py
-                response = chat_llm(user_input)
+                role='assistant'
+            temp_messages.append({'role': role, 'content': msg.content})
 
-            # Print assistant response text
-            st.write(response)
-            # Add assistant response to history
-            st.session_state["messages"].append({"role": "assistant", "content": response})
+        st.session_state['message_history'] = temp_messages
+
+
+# **************************************** Main UI ************************************
+
+# loading the conversation history
+for message in st.session_state['message_history']:
+    with st.chat_message(message['role']):
+        st.text(message['content'])
+
+user_input = st.chat_input('Type here')
+
+if user_input:
+
+    # first add the message to message_history
+    st.session_state['message_history'].append({'role': 'user', 'content': user_input})
+    with st.chat_message('user'):
+        st.text(user_input)
+
+    #CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}
+
+    CONFIG = {
+        "configurable": {"thread_id": st.session_state["thread_id"]},
+        "metadata": {
+            "thread_id": st.session_state["thread_id"]
+        },
+        "run_name": "chat_turn",
+    }
+
+    # first add the message to message_history
+    with st.chat_message('assistant'):
+
+        ai_message = st.write_stream(
+            message_chunk.content for message_chunk, metadata in chatbot.stream(
+                {'messages': [HumanMessage(content=user_input)]},
+                config= CONFIG,
+                stream_mode= 'messages'
+            )
+        )
+
+    st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
