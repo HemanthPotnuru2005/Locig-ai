@@ -103,3 +103,8 @@ if user_input:
         )
 
     st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
+
+
+    # this is the addion of the base and checking 
+
+    print("hello")
